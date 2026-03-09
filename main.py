@@ -38,10 +38,10 @@ class OverlayWindow(QWidget):
         self.bg_color = QColor(0, 0, 0, 180)
         self.text_color = QColor(255, 255, 255)
         self._selected = False
+        self._hovered = False      # マウスがウィンドウ上にあるか
         self._drag_pos = None
         self._last_gpos = None
         self._resize_dir = None
-        self._drag_geom = None
 
         self._update_label_style()
         self.resize(420, 100)
@@ -63,7 +63,8 @@ class OverlayWindow(QWidget):
         }
 
     def _hit_handle(self, pos):
-        if not self._selected:
+        # ホバー中または選択中はハンドルのヒット判定を有効化
+        if not self._hovered and not self._selected:
             return None
         for name, hpos in self._handle_positions().items():
             dx = pos.x() - hpos.x()
@@ -87,14 +88,21 @@ class OverlayWindow(QWidget):
             painter.fillRect(cr, self.bg_color)
 
         if self._selected:
-            # 破線ボーダー
+            # 破線ボーダー（選択中）
             pen = QPen(QColor(60, 130, 220), 1.5, Qt.PenStyle.DashLine)
             pen.setDashPattern([4, 3])
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(cr.adjusted(0, 0, -1, -1))
+        elif self._hovered:
+            # 薄い実線ボーダー（ホバー中）
+            pen = QPen(QColor(150, 180, 220, 160), 1.0, Qt.PenStyle.SolidLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(cr.adjusted(0, 0, -1, -1))
 
-            # 8つのハンドル（白丸＋青枠）
+        # ハンドルはホバー中または選択中に表示
+        if self._hovered or self._selected:
             handle_pen = QPen(QColor(60, 130, 220), 1.5)
             for hpos in self._handle_positions().values():
                 painter.setPen(handle_pen)
@@ -132,6 +140,17 @@ class OverlayWindow(QWidget):
         self.bg_enabled = enabled
         self.update()
 
+    # ── ホバー検知 ────────────────────────────
+    def enterEvent(self, event):
+        self._hovered = True
+        self.update()
+
+    def leaveEvent(self, event):
+        # ドラッグ中はホバー状態を維持
+        if self._drag_pos is None:
+            self._hovered = False
+            self.update()
+
     # ── マウス操作 ────────────────────────────
     def _cursor_for(self, direction):
         table = {
@@ -149,10 +168,12 @@ class OverlayWindow(QWidget):
 
         handle = self._hit_handle(pos)
         if handle:
+            # ハンドルを掴んだ → リサイズ開始（自動選択）
+            self.set_selected(True)
             self._resize_dir = handle
             self._drag_pos = event.globalPosition().toPoint()
             self._last_gpos = event.globalPosition().toPoint()
-            self._drag_geom = self.geometry()
+            self.grabMouse()   # ウィンドウ外へ出てもマウスイベントを捕捉
             return
 
         if self._content_rect().contains(pos):
@@ -204,8 +225,15 @@ class OverlayWindow(QWidget):
             self.move(gpos - self._drag_pos)
 
     def mouseReleaseEvent(self, event):
+        if self._resize_dir is not None:
+            self.releaseMouse()
         self._drag_pos = None
         self._resize_dir = None
+        # マウスリリース後にホバー状態を更新
+        pos = event.position().toPoint()
+        if not self.rect().contains(pos):
+            self._hovered = False
+            self.update()
 
 
 class GlobalClickFilter(QObject):
@@ -316,7 +344,7 @@ class ControlPanel(QMainWindow):
         self.toggle_btn.clicked.connect(self._toggle_overlay)
         btn_layout.addWidget(self.toggle_btn)
 
-        hint = QLabel("クリックで選択 → ハンドルでリサイズ / ドラッグで移動 / 外クリックで解除")
+        hint = QLabel("オーバーレイにマウスを乗せるとハンドルが表示されます\nハンドルをドラッグしてリサイズ / 中央ドラッグで移動 / 外クリックで選択解除")
         hint.setStyleSheet("color: gray; font-size: 10px;")
         hint.setWordWrap(True)
         root.addWidget(hint)
